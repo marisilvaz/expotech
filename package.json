@@ -1,0 +1,17 @@
+{
+  "name": "expotech-pixel-quest",
+  "version": "2.0.0",
+  "description": "Criador de herói pixel art + jogo de plataforma 8-bit + ranking em MySQL para a Expotech",
+  "type": "module",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js",
+    "db:reset": "node database/reset.js"
+  },
+  "engines": { "node": ">=20.12" },
+  "dependencies": {
+    "express": "^5.1.0",
+    "mysql2": "^3.15.0"
+  },
+  "license": "MIT"
+}

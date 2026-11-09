@@ -1,0 +1,164 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+  <title>Expotech Pixel Quest</title>
+  <meta name="theme-color" content="#1b1b2f">
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 8 8' shape-rendering='crispEdges'><rect x='2' y='0' width='4' height='1' fill='%231b1b2f'/><rect x='1' y='1' width='6' height='6' fill='%23ffd23f'/><rect x='2' y='7' width='4' height='1' fill='%231b1b2f'/><rect x='3' y='2' width='1' height='4' fill='%23fff2a8'/></svg>">
+  <link rel="stylesheet" href="css/style.css">
+</head>
+<body>
+
+  <!-- Jogo Phaser (vila no fundo + fase) -->
+  <div id="jogo"></div>
+
+  <!-- ============ TELA DE TÍTULO ============ -->
+  <section class="tela" id="tela-titulo" data-tela="titulo">
+    <div class="titulo-logo" id="logo" aria-label="Expotech Pixel Quest">
+      <div class="logo-linha logo-principal" id="logoLetras"></div>
+      <div class="logo-linha logo-sub"><span>PIXEL</span> <span>QUEST</span></div>
+    </div>
+
+    <p class="pisca" id="pressStart">APERTE START</p>
+
+    <ul class="menu" id="menuTitulo" hidden>
+      <li data-acao="jogar">JOGAR</li>
+      <li data-acao="criar">CRIAR HERÓI</li>
+      <li data-acao="ranking">HALL DA FAMA</li>
+      <li data-acao="vila">VISITAR A VILA</li>
+    </ul>
+
+    <div class="rodape-titulo">
+      <span id="statusBanco" class="status">● CONECTANDO...</span>
+      <span id="tickerStats"></span>
+    </div>
+    <p class="dica-teclas">← → MOVER · ESPAÇO PULAR · SHIFT CORRER · M SOM · F TELA CHEIA</p>
+  </section>
+
+  <!-- ============ CRIADOR DE HERÓI ============ -->
+  <section class="tela" id="tela-criador" data-tela="criador" hidden>
+    <div class="janela criador">
+      <header class="janela-topo">
+        <button class="btn-pixel btn-mini" data-voltar>◀ VOLTAR</button>
+        <h1>CRIE SEU HERÓI</h1>
+        <span class="moeda-deco"></span>
+      </header>
+
+      <div class="criador-corpo">
+        <div class="vitrine">
+          <canvas id="previa" width="216" height="264"></canvas>
+          <div class="pedestal"></div>
+          <p class="placa-nome" id="placaNome">HERÓI</p>
+          <div class="poses">
+            <button class="btn-pose ativo" data-pose="idle">PARADO</button>
+            <button class="btn-pose" data-pose="andar">ANDANDO</button>
+            <button class="btn-pose" data-pose="jump">PULO</button>
+          </div>
+        </div>
+
+        <div class="controles">
+          <label class="rotulo" for="nome">NOME</label>
+          <input id="nome" class="campo-nome" maxlength="12" autocomplete="off" spellcheck="false" placeholder="SEU NOME">
+
+          <div class="dupla">
+            <div><p class="rotulo">PERSONAGEM</p><div class="segmento" id="segPersonagem"></div></div>
+            <div><p class="rotulo">ROUPA</p><div class="segmento" id="segRoupa"></div></div>
+          </div>
+
+          <p class="rotulo">CABELO</p>
+          <div class="opcoes" id="cabelos"></div>
+
+          <p class="rotulo">ACESSÓRIO</p>
+          <div class="opcoes" id="acessorios"></div>
+
+          <div class="cores" id="cores"></div>
+
+          <div class="acoes">
+            <button class="btn-pixel btn-amarelo" id="btnSortear">🎲 SORTEAR</button>
+            <button class="btn-pixel btn-cinza" id="btnPadrao">↺ PADRÃO</button>
+            <button class="btn-pixel btn-verde btn-grande" id="btnSalvar">▶ SALVAR E JOGAR</button>
+          </div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ============ CHEGADA NA VILA ============ -->
+  <section class="tela" id="tela-chegada" data-tela="chegada" hidden>
+    <div class="balao" id="balaoChegada"></div>
+  </section>
+
+  <!-- ============ RESULTADO ============ -->
+  <section class="tela" id="tela-resultado" data-tela="resultado" hidden>
+    <div class="janela resultado">
+      <h1 id="resTitulo">FASE COMPLETA!</h1>
+      <p class="res-heroi" id="resHeroi"></p>
+      <ul class="placar" id="resPlacar"></ul>
+      <div class="res-total"><span>TOTAL</span><strong id="resTotal">0</strong></div>
+      <p class="res-posicao" id="resPosicao"></p>
+      <div class="conquistas" id="resConquistas"></div>
+      <div class="acoes-linha">
+        <button class="btn-pixel btn-verde" data-ir="jogar">↻ JOGAR DE NOVO</button>
+        <button class="btn-pixel btn-amarelo" data-ir="ranking">★ RANKING</button>
+        <button class="btn-pixel btn-cinza" data-ir="titulo">⌂ INÍCIO</button>
+      </div>
+    </div>
+  </section>
+
+  <!-- ============ RANKING ============ -->
+  <section class="tela" id="tela-ranking" data-tela="ranking" hidden>
+    <div class="janela ranking">
+      <header class="janela-topo">
+        <button class="btn-pixel btn-mini" data-voltar>◀ VOLTAR</button>
+        <h1>HALL DA FAMA</h1>
+        <span class="moeda-deco"></span>
+      </header>
+      <ol class="lista-ranking" id="listaRanking"></ol>
+      <div class="stats" id="statsRanking"></div>
+    </div>
+  </section>
+
+  <!-- ============ VILA (só olhar) ============ -->
+  <section class="tela" id="tela-vila" data-tela="vila" hidden>
+    <div class="faixa-vila">
+      <button class="btn-pixel btn-mini" data-voltar>◀ VOLTAR</button>
+      <span>VILA EXPOTECH · <b id="qtdMoradores">0</b> HERÓIS MORAM AQUI</span>
+    </div>
+  </section>
+
+  <!-- ============ CONTAGEM ============ -->
+  <section class="tela" id="tela-contagem" data-tela="contagem" hidden>
+    <p class="contagem" id="contagem">3</p>
+  </section>
+
+  <!-- Controles de toque (tablet/celular) -->
+  <div class="toque" id="toque" hidden>
+    <div class="toque-lado">
+      <button data-toque="esq" aria-label="Esquerda">◀</button>
+      <button data-toque="dir" aria-label="Direita">▶</button>
+    </div>
+    <div class="toque-lado">
+      <button data-toque="correr" aria-label="Correr">B</button>
+      <button data-toque="pulo" aria-label="Pular" class="toque-pulo">A</button>
+    </div>
+  </div>
+
+  <!-- Botões fixos -->
+  <div class="cantinho">
+    <button class="btn-icone" id="btnSom" title="Som (M)">♪</button>
+    <button class="btn-icone" id="btnTela" title="Tela cheia (F)">⛶</button>
+  </div>
+
+  <!-- Transição em blocos -->
+  <div class="transicao" id="transicao" aria-hidden="true"></div>
+  <div class="aviso" id="aviso" role="status"></div>
+
+  <!-- Bibliotecas (cópias locais: funciona sem internet na expo) -->
+  <script src="vendor/phaser.min.js"></script>
+  <script src="vendor/gsap.min.js"></script>
+  <script src="vendor/TextPlugin.min.js"></script>
+  <script src="vendor/Tone.js"></script>
+  <script type="module" src="js/app.js"></script>
+</body>
+</html>
