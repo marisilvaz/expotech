@@ -7,6 +7,7 @@ import mysql from "mysql2/promise";
 import { readFile } from "node:fs/promises";
 import { fileURLToPath } from "node:url";
 import path from "node:path";
+import os from "node:os";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
@@ -68,6 +69,27 @@ async function migrar(conexao) {
   if (!existe.has("cabelo")) await conexao.query(`ALTER TABLE ${t} ADD COLUMN cabelo ENUM('curto','longo','rabo','afro','coque') NOT NULL DEFAULT 'curto' AFTER personagem`);
   if (!existe.has("roupa")) await conexao.query(`ALTER TABLE ${t} ADD COLUMN roupa ENUM('calca','saia') NOT NULL DEFAULT 'calca' AFTER cabelo`);
   await conexao.query(`ALTER TABLE ${t} MODIFY acessorio ENUM('nenhum','gorro','bone','fone','coroa') NOT NULL DEFAULT 'gorro'`);
+
+  // partidas: colunas da versão com chefe
+  const [colsP] = await conexao.query(
+    "SELECT COLUMN_NAME AS c FROM information_schema.COLUMNS WHERE TABLE_SCHEMA = ? AND TABLE_NAME = 'partidas'", [db]);
+  const temP = new Set(colsP.map((x) => x.c));
+  const tp = `\`${db}\`.partidas`;
+  const novas = [
+    ["fase_alcancada", "TINYINT UNSIGNED NOT NULL DEFAULT 1 AFTER venceu"],
+    ["chefe_derrotado", "TINYINT(1) NOT NULL DEFAULT 0 AFTER fase_alcancada"],
+    ["disquetes", "TINYINT UNSIGNED NOT NULL DEFAULT 0 AFTER chefe_derrotado"],
+    ["dispositivo", "ENUM('pc','celular') NOT NULL DEFAULT 'pc' AFTER disquetes"],
+  ];
+  for (const [col, def] of novas) if (colsP.length && !temP.has(col)) await conexao.query(`ALTER TABLE ${tp} ADD COLUMN ${col} ${def}`);
+}
+
+// Endereços desta máquina na rede local (para o QR code dos celulares)
+function enderecosRede() {
+  return Object.values(os.networkInterfaces()).flat()
+    .filter((i) => i && i.family === "IPv4" && !i.internal)
+    .map((i) => i.address)
+    .sort((a, b) => (b.startsWith("192.168.") - a.startsWith("192.168.")) || (b.startsWith("10.") - a.startsWith("10.")));
 }
 
 // ---------------------------------------------------------------------
@@ -138,23 +160,32 @@ api.post("/partidas", async (req, res) => {
     tempo_seg: inteiro(b.tempo_seg, 9999),
     vidas_restantes: inteiro(b.vidas_restantes, 9),
     venceu: b.venceu ? 1 : 0,
+    fase_alcancada: Math.max(1, inteiro(b.fase_alcancada, 9)),
+    chefe_derrotado: b.chefe_derrotado ? 1 : 0,
+    disquetes: inteiro(b.disquetes, 9),
+    dispositivo: b.dispositivo === "celular" ? "celular" : "pc",
   };
   const sem_dano = Boolean(b.sem_dano);
 
   const [r] = await pool.execute(
-    `INSERT INTO partidas (jogador_id, pontos, moedas, inimigos, tempo_seg, vidas_restantes, venceu)
-     VALUES (?, ?, ?, ?, ?, ?, ?)`,
-    [jogadorId, p.pontos, p.moedas, p.inimigos, p.tempo_seg, p.vidas_restantes, p.venceu],
+    `INSERT INTO partidas (jogador_id, pontos, moedas, inimigos, tempo_seg, vidas_restantes, venceu,
+                           fase_alcancada, chefe_derrotado, disquetes, dispositivo)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    [jogadorId, p.pontos, p.moedas, p.inimigos, p.tempo_seg, p.vidas_restantes, p.venceu,
+      p.fase_alcancada, p.chefe_derrotado, p.disquetes, p.dispositivo],
   );
 
   // Regras das conquistas
   const ganhou = ["primeira_partida"];
   if (p.moedas >= 30) ganhou.push("colecionador");
   if (p.inimigos >= 6) ganhou.push("cacador_bugs");
-  if (p.venceu) ganhou.push("vencedor");
-  if (p.venceu && p.tempo_seg < 90) ganhou.push("veloz");
+  if (p.fase_alcancada >= 2) ganhou.push("vencedor");
+  if (p.chefe_derrotado) ganhou.push("chefe");
+  if (p.venceu && p.tempo_seg < 180) ganhou.push("veloz");
   if (p.venceu && sem_dano) ganhou.push("intocavel");
-  if (p.pontos >= 15000) ganhou.push("lenda");
+  if (p.disquetes >= 3) ganhou.push("arquivista");
+  if (p.dispositivo === "celular") ganhou.push("mobile");
+  if (p.pontos >= 30000) ganhou.push("lenda");
 
   const novas = [];
   for (const codigo of ganhou) {
@@ -185,12 +216,27 @@ api.post("/partidas", async (req, res) => {
 
 api.get("/ranking", async (req, res) => {
   const limite = inteiro(req.query.limite ?? 10, 50) || 10;
-  const [linhas] = await pool.query(
-    `SELECT * FROM vw_ranking
-     ORDER BY melhor_pontuacao DESC, melhor_tempo IS NULL, melhor_tempo ASC
-     LIMIT ?`, [limite],
-  );
-  res.json(linhas.map((l) => ({ ...l, vitorias: Number(l.vitorias) })));
+  const [linhas] = req.query.periodo === "hoje"
+    // ranking só com as partidas de hoje
+    ? await pool.query(
+      `SELECT * FROM (
+         SELECT j.id AS jogador_id, j.nome, j.personagem, j.cabelo, j.roupa, j.acessorio,
+                j.cor_acessorio, j.cor_cabelo, j.cor_pele, j.cor_jaqueta, j.cor_calca, j.cor_tenis,
+                MAX(p.pontos) AS melhor_pontuacao, COUNT(p.id) AS partidas_jogadas,
+                SUM(p.venceu) AS vitorias, SUM(p.chefe_derrotado) AS chefes,
+                MIN(CASE WHEN p.venceu = 1 THEN p.tempo_seg END) AS melhor_tempo
+         FROM jogadores j JOIN partidas p ON p.jogador_id = j.id
+         WHERE p.criado_em >= CURDATE()
+         GROUP BY j.id, j.nome, j.personagem, j.cabelo, j.roupa, j.acessorio,
+                  j.cor_acessorio, j.cor_cabelo, j.cor_pele, j.cor_jaqueta, j.cor_calca, j.cor_tenis
+       ) r
+       ORDER BY melhor_pontuacao DESC, melhor_tempo IS NULL, melhor_tempo ASC
+       LIMIT ?`, [limite])
+    : await pool.query(
+      `SELECT * FROM vw_ranking
+       ORDER BY melhor_pontuacao DESC, melhor_tempo IS NULL, melhor_tempo ASC
+       LIMIT ?`, [limite]);
+  res.json(linhas.map((l) => ({ ...l, vitorias: Number(l.vitorias), chefes: Number(l.chefes) })));
 });
 
 api.get("/estatisticas", async (_req, res) => {
@@ -205,6 +251,11 @@ api.get("/jogadores/:id/conquistas", async (req, res) => {
      WHERE jc.jogador_id = ? ORDER BY jc.obtida_em`, [inteiro(req.params.id, 4_000_000_000)],
   );
   res.json(linhas);
+});
+
+// endereços para jogar pelo celular (fora do bloqueio de banco: funciona mesmo offline)
+app.get("/api/rede", (_req, res) => {
+  res.json({ urls: enderecosRede().map((ip) => `http://${ip}:${CONFIG.porta}`) });
 });
 
 app.use("/api", api);
@@ -228,7 +279,7 @@ async function conectar() {
     if (!avisou) {
       avisou = true;
       console.error("✖ Não consegui conectar no MySQL:", e.message);
-      console.error("  Confira se o MySQL está ligado (XAMPP → Start em MySQL) e os dados no arquivo .env");
+      console.error("  Confira se o MySQL está ligado e os dados no arquivo .env");
       console.error("  O jogo funciona mesmo assim, salvando só no navegador (modo offline).");
       console.error("  Vou tentar de novo a cada 10 segundos...");
     }
@@ -237,6 +288,13 @@ async function conectar() {
 }
 await conectar();
 
-app.listen(CONFIG.porta, () => {
-  console.log(`\n  ★ EXPOTECH PIXEL QUEST rodando em  http://localhost:${CONFIG.porta}\n`);
+app.listen(CONFIG.porta, "0.0.0.0", () => {
+  console.log(`\n  ★ EXPOTECH PIXEL QUEST rodando em  http://localhost:${CONFIG.porta}`);
+  const ips = enderecosRede();
+  if (ips.length) {
+    console.log("\n  📱 Nos celulares (mesma rede Wi-Fi), acesse:");
+    ips.forEach((ip) => console.log(`       http://${ip}:${CONFIG.porta}`));
+    console.log("     (o QR code aparece na tela inicial do jogo)");
+  }
+  console.log("");
 });

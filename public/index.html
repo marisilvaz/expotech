@@ -2,7 +2,13 @@
 <html lang="pt-BR">
 <head>
   <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
+  <meta name="mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+  <meta name="apple-mobile-web-app-title" content="Pixel Quest">
+  <link rel="manifest" href="manifest.webmanifest">
+  <link rel="apple-touch-icon" href="icones/icone-192.png">
   <title>Expotech Pixel Quest</title>
   <meta name="theme-color" content="#1b1b2f">
   <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 8 8' shape-rendering='crispEdges'><rect x='2' y='0' width='4' height='1' fill='%231b1b2f'/><rect x='1' y='1' width='6' height='6' fill='%23ffd23f'/><rect x='2' y='7' width='4' height='1' fill='%231b1b2f'/><rect x='3' y='2' width='1' height='4' fill='%23fff2a8'/></svg>">
@@ -33,7 +39,14 @@
       <span id="statusBanco" class="status">● CONECTANDO...</span>
       <span id="tickerStats"></span>
     </div>
-    <p class="dica-teclas">← → MOVER · ESPAÇO PULAR · SHIFT CORRER · M SOM · F TELA CHEIA</p>
+    <p class="dica-teclas" id="dicaTeclas">← → MOVER · ESPAÇO PULAR · SHIFT CORRER/LASER · ESC PAUSA · M SOM · F TELA CHEIA</p>
+
+    <!-- QR code: visitantes jogam no próprio celular (mesma rede Wi-Fi) -->
+    <aside class="qr" id="qrBox" hidden>
+      <canvas id="qrCanvas" width="132" height="132"></canvas>
+      <p>JOGUE NO<br>SEU CELULAR!</p>
+      <small id="qrUrl"></small>
+    </aside>
   </section>
 
   <!-- ============ CRIADOR DE HERÓI ============ -->
@@ -114,6 +127,10 @@
         <h1>HALL DA FAMA</h1>
         <span class="moeda-deco"></span>
       </header>
+      <div class="abas" id="abasRanking">
+        <button class="ativo" data-periodo="geral">GERAL</button>
+        <button data-periodo="hoje">HOJE</button>
+      </div>
       <ol class="lista-ranking" id="listaRanking"></ol>
       <div class="stats" id="statsRanking"></div>
     </div>
@@ -134,14 +151,16 @@
 
   <!-- Controles de toque (tablet/celular) -->
   <div class="toque" id="toque" hidden>
-    <div class="toque-lado">
-      <button data-toque="esq" aria-label="Esquerda">◀</button>
-      <button data-toque="dir" aria-label="Direita">▶</button>
+    <div class="zona-joy" id="zonaJoy">
+      <div class="joy-base" id="joyBase"><div class="joy-pino" id="joyPino"></div></div>
+      <span class="joy-dica">ARRASTE ◀ ▶<br>(LONGE = CORRE)</span>
     </div>
-    <div class="toque-lado">
-      <button data-toque="correr" aria-label="Correr">B</button>
-      <button data-toque="pulo" aria-label="Pular" class="toque-pulo">A</button>
+    <div class="toque-botoes">
+      <button data-toque="acao" class="btn-b" aria-label="Correr / Laser">B</button>
+      <button data-toque="pulo" class="btn-a" aria-label="Pular">A</button>
     </div>
+    <button class="toque-pausa" id="btnPausaToque" aria-label="Pausar">II</button>
+    <p class="dica-girar">GIRE O CELULAR PARA JOGAR EM TELA MAIOR ⟲</p>
   </div>
 
   <!-- Botões fixos -->
@@ -159,6 +178,7 @@
   <script src="vendor/gsap.min.js"></script>
   <script src="vendor/TextPlugin.min.js"></script>
   <script src="vendor/Tone.js"></script>
+  <script src="vendor/qrcode.js"></script>
   <script type="module" src="js/app.js"></script>
 </body>
 </html>

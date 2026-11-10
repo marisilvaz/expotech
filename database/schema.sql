@@ -1,6 +1,6 @@
 -- =====================================================================
 --  EXPOTECH PIXEL QUEST - Banco de dados MySQL
---  Compatível com MySQL 8+ e MariaDB 10.4+ (XAMPP)
+--  Compatível com MySQL 8+ e MariaDB 10.4+
 --
 --  Pode ser importado pelo phpMyAdmin (aba "Importar") ou pelo terminal:
 --     mysql -u root -p < database/schema.sql
@@ -48,10 +48,15 @@ CREATE TABLE IF NOT EXISTS partidas (
   tempo_seg    SMALLINT UNSIGNED NOT NULL DEFAULT 0,
   vidas_restantes TINYINT UNSIGNED NOT NULL DEFAULT 0,
   venceu       TINYINT(1)   NOT NULL DEFAULT 0,
+  fase_alcancada TINYINT UNSIGNED NOT NULL DEFAULT 1,
+  chefe_derrotado TINYINT(1) NOT NULL DEFAULT 0,
+  disquetes    TINYINT UNSIGNED NOT NULL DEFAULT 0,
+  dispositivo  ENUM('pc','celular') NOT NULL DEFAULT 'pc',
   criado_em    DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP,
   PRIMARY KEY (id),
   KEY idx_partidas_pontos (pontos),
   KEY idx_partidas_jogador (jogador_id),
+  KEY idx_partidas_data (criado_em),
   CONSTRAINT fk_partidas_jogador
     FOREIGN KEY (jogador_id) REFERENCES jogadores (id)
     ON DELETE CASCADE
@@ -83,14 +88,18 @@ CREATE TABLE IF NOT EXISTS jogador_conquistas (
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 -- Catálogo inicial de conquistas (INSERT IGNORE = pode rodar várias vezes)
-INSERT IGNORE INTO conquistas (codigo, titulo, descricao, icone) VALUES
+INSERT INTO conquistas (codigo, titulo, descricao, icone) VALUES
   ('primeira_partida', 'Primeiro Passo',   'Jogou a primeira partida na Expotech',        '★'),
   ('colecionador',     'Colecionador',     'Pegou 30 moedas ou mais em uma partida',      '●'),
   ('cacador_bugs',     'Caçador de Bugs',  'Derrotou 6 inimigos em uma partida',          '✖'),
-  ('vencedor',         'Missão Cumprida',  'Chegou ao portal no fim da fase',             '▲'),
-  ('veloz',            'Veloz',            'Terminou a fase em menos de 90 segundos',     '»'),
-  ('intocavel',        'Intocável',        'Terminou a fase sem perder nenhuma vida',     '♥'),
-  ('lenda',            'Lenda da Expo',    'Fez 15.000 pontos ou mais',                   '♛');
+  ('vencedor',         'Missão Cumprida',  'Atravessou o portal da Fase 1',               '▲'),
+  ('veloz',            'Veloz',            'Venceu o jogo em menos de 3 minutos',         '»'),
+  ('intocavel',        'Intocável',        'Venceu o jogo sem perder nenhuma vida',       '♥'),
+  ('lenda',            'Lenda da Expo',    'Fez 30.000 pontos ou mais',                   '♛'),
+  ('chefe',            'Derrubou o Rei',   'Derrotou o Rei Glitch na Sala dos Servidores', '⚔'),
+  ('arquivista',       'Arquivista',       'Achou os 3 disquetes escondidos',             '▣'),
+  ('mobile',           'Jogador Mobile',   'Jogou pelo celular',                          '▯')
+ON DUPLICATE KEY UPDATE titulo = VALUES(titulo), descricao = VALUES(descricao), icone = VALUES(icone);
 
 -- ---------------------------------------------------------------------
 -- VIEW DO RANKING: melhor partida de cada jogador
@@ -105,6 +114,7 @@ SELECT
   MAX(p.pontos)      AS melhor_pontuacao,
   COUNT(p.id)        AS partidas_jogadas,
   SUM(p.venceu)      AS vitorias,
+  SUM(p.chefe_derrotado) AS chefes,
   MIN(CASE WHEN p.venceu = 1 THEN p.tempo_seg END) AS melhor_tempo
 FROM jogadores j
 JOIN partidas p ON p.jogador_id = j.id
@@ -121,4 +131,6 @@ SELECT
   (SELECT COALESCE(SUM(moedas), 0) FROM partidas)           AS total_moedas,
   (SELECT COALESCE(SUM(inimigos), 0) FROM partidas)         AS total_inimigos,
   (SELECT COALESCE(SUM(venceu), 0) FROM partidas)           AS total_vitorias,
+  (SELECT COALESCE(SUM(chefe_derrotado), 0) FROM partidas)  AS total_chefes,
+  (SELECT COUNT(*) FROM partidas WHERE dispositivo = 'celular') AS partidas_celular,
   (SELECT COALESCE(MAX(pontos), 0) FROM partidas)           AS recorde;

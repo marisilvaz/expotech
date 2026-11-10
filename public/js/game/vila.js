@@ -100,7 +100,9 @@ export class VilaScene extends Phaser.Scene {
   update(time, delta) {
     const dt = Math.min(delta, 50) / 1000;
     this.atualizarFundo(dt);
-    for (const m of this.moradores) {
+    const comNome = this.moradores.length - 6; // só os 6 mais recentes mostram o nome (evita bagunça)
+    for (const [i, m] of this.moradores.entries()) {
+      m.nome.setVisible(i >= comNome || !!m.selo);
       const s = m.sprite;
       if (time > m.proxima && !m.pulando) {
         const r = Math.random();

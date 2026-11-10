@@ -24,6 +24,7 @@ const estado = {
   pose: "idle",
   ultimaAtividade: Date.now(),
   modoAtracao: false,
+  periodo: "geral",
 };
 
 // ---------------------------------------------------------------------
@@ -64,7 +65,7 @@ function aviso(texto, ms = 2200) {
   gsap.killTweensOf(el);
   gsap.timeline()
     .to(el, { y: "0%", yPercent: 0, top: 14, duration: 0.25, ease: "back.out(2)", transform: "translate(-50%, 0)" })
-    .to(el, { transform: "translate(-50%, -160%)", duration: 0.2, delay: ms / 1000 });
+    .to(el, { transform: "translate(-50%, -400%)", duration: 0.2, delay: ms / 1000 });
 }
 
 function confetes(qtd = 70) {
@@ -90,7 +91,8 @@ function mostrar(nome) {
   $$(".tela").forEach((t) => { t.hidden = t.dataset.tela !== nome; });
   estado.tela = nome;
   document.body.classList.toggle("jogando", nome === "jogo");
-  $("#toque").hidden = !(TOUCH && nome === "jogo");
+  $("#toque").hidden = !(TOUCH && (nome === "jogo" || nome === "contagem"));
+  atualizarLayout();
   aoEntrar[nome]?.();
   selecionar(0);
 }
@@ -159,6 +161,7 @@ $("#menuTitulo").addEventListener("click", (e) => {
   Audio.sfx("ok");
   const acao = li.dataset.acao;
   if (acao === "jogar") {
+    modoCelular();
     if (estado.jogador) comecarPartida();
     else { aviso("CRIE SEU HERÓI PRIMEIRO!"); irPara("criador"); }
   } else if (acao === "criar") irPara("criador");
@@ -283,8 +286,10 @@ function quadro(cores, f) {
 
 let passoPrevia = 0;
 function desenharPrevia() {
-  const ciclo = ["walk1", "idle", "walk2", "idle"];
-  const f = estado.pose === "andar" ? ciclo[passoPrevia % 4] : estado.pose;
+  const correndo = ["run1", "run2", "run3", "run4"];
+  const parado = ["idle", "idle", "idle", "idleB", "idleB", "idleB", "idle", "idle", "blink", "idleB", "idleB", "idleB"];
+  const f = estado.pose === "andar" ? correndo[passoPrevia % 4]
+    : estado.pose === "idle" ? parado[Math.floor(passoPrevia / 2) % parado.length] : estado.pose;
   S.drawScaled($("#previa"), quadro(estado.cores, f), { scale: 12 });
 }
 setInterval(() => { passoPrevia++; if (estado.tela === "criador") desenharPrevia(); }, 125);
@@ -347,6 +352,7 @@ async function salvarHeroi() {
     return;
   }
   salvando = true;
+  modoCelular();
   Audio.sfx("salvo");
   try {
     estado.jogador = await API.criarJogador({ nome, ...estado.cores });
@@ -373,6 +379,7 @@ function comecarPartida() {
     Jogo.jogar(estado.jogador, {
       onFim: (r) => terminarPartida(r),
       onInativo: () => { aviso("ATÉ A PRÓXIMA!"); voltarAoInicio(); },
+      onSair: () => voltarAoInicio(),
     });
     Jogo.game.scene.pause("fase");
   });
@@ -395,21 +402,26 @@ aoEntrar.jogo = () => { document.activeElement?.blur(); };
 // RESULTADO
 // ---------------------------------------------------------------------
 async function terminarPartida(r) {
-  const salvar = API.salvarPartida({ jogador_id: estado.jogador.id, ...r });
+  const salvar = API.salvarPartida({ jogador_id: estado.jogador.id, dispositivo: TOUCH ? "celular" : "pc", ...r });
   estado.ultimoResultado = r;
   mostrar("resultado");
   const janela = $(".resultado");
   janela.classList.toggle("derrota", !r.venceu);
-  $("#resTitulo").textContent = r.venceu ? "FASE COMPLETA!" : "FIM DE JOGO";
+  $("#resTitulo").textContent = r.venceu ? "VITÓRIA!" : r.fase_alcancada >= 2 ? "QUASE LÁ!" : "FIM DE JOGO";
   $("#resHeroi").textContent = `HERÓI: ${estado.jogador.nome.toUpperCase()}`;
   const n = (v) => Number(v).toLocaleString("pt-BR");
   const linhas = [
+    ["CHEGOU ATÉ", r.venceu ? "REI GLITCH DERROTADO ♛" : r.fase_alcancada >= 2 ? "BATALHA DO CHEFE" : "FASE 1"],
     ["MOEDAS", `${r.moedas}/${r.totalMoedas}`],
+    ["DISQUETES", `${r.disquetes}/3`],
     ["INIMIGOS", r.inimigos],
     ["TEMPO", `${r.tempo_seg}s`],
-    ["PONTOS DA FASE", n(r.pontosBase)],
+    ["PONTOS", n(r.pontosBase)],
   ];
-  if (r.venceu) linhas.push(["BÔNUS TEMPO", `+${n(r.bonusTempo)}`], ["BÔNUS VIDAS", `+${n(r.bonusVidas)}`], ["BÔNUS PORTAL", `+${n(r.bonusFase)}`]);
+  if (r.continues) linhas.push(["CONTINUES USADOS", r.continues]);
+  if (r.bonusTempo) linhas.push(["BÔNUS TEMPO", `+${n(r.bonusTempo)}`]);
+  if (r.bonusFase) linhas.push(["BÔNUS PORTAL", `+${n(r.bonusFase)}`]);
+  if (r.bonusVidas) linhas.push(["BÔNUS VIDAS", `+${n(r.bonusVidas)}`]);
   $("#resPlacar").innerHTML = linhas.map(([a, b]) => `<li><span>${a}</span><span>${b}</span></li>`).join("");
   $("#resTotal").textContent = "0";
   $("#resPosicao").innerHTML = "";
@@ -463,7 +475,7 @@ $("#tela-resultado").addEventListener("click", (e) => {
   const b = e.target.closest("[data-ir]");
   if (!b) return;
   Audio.sfx("ok");
-  if (b.dataset.ir === "jogar") comecarPartida();
+  if (b.dataset.ir === "jogar") { modoCelular(); comecarPartida(); }
   else if (b.dataset.ir === "ranking") { Jogo.pararFase(); irPara("ranking"); }
   else voltarAoInicio();
 });
@@ -476,9 +488,10 @@ aoEntrar.ranking = async () => {
   Audio.musica("titulo");
   const lista = $("#listaRanking");
   lista.innerHTML = "";
-  const [rk, st] = await Promise.all([API.ranking(10), API.estatisticas()]);
+  $$("#abasRanking button").forEach((b) => b.classList.toggle("ativo", b.dataset.periodo === estado.periodo));
+  const [rk, st] = await Promise.all([API.ranking(10, estado.periodo), API.estatisticas()]);
   if (estado.tela !== "ranking") return;
-  if (!rk.length) lista.innerHTML = `<li class="vazio">NINGUÉM JOGOU AINDA.<br>SEJA O PRIMEIRO!</li>`;
+  if (!rk.length) lista.innerHTML = `<li class="vazio">${estado.periodo === "hoje" ? "NINGUÉM JOGOU HOJE AINDA." : "NINGUÉM JOGOU AINDA."}<br>SEJA O PRIMEIRO!</li>`;
   rk.forEach((r, i) => {
     const li = document.createElement("li");
     if (estado.jogador && r.jogador_id === estado.jogador.id) li.classList.add("voce");
@@ -486,18 +499,27 @@ aoEntrar.ranking = async () => {
       <span class="nome"></span><span>${String(r.melhor_pontuacao).padStart(6, "0")}</span>
       <span class="tempo">${r.melhor_tempo ? `⏱${r.melhor_tempo}s` : "—"}</span>`;
     $(".nome", li).textContent = String(r.nome).toUpperCase();
-    S.drawScaled($("canvas", li), quadro(r, i === 0 ? "jump" : "idle"), { scale: 2 });
+    if (Number(r.chefes) > 0) $(".nome", li).insertAdjacentHTML("beforeend", `<span class="coroa" title="Derrotou o Rei Glitch">♛</span>`);
+    S.drawScaled($("canvas", li), quadro(r, i === 0 ? "win" : "idle"), { scale: 2 });
     lista.append(li);
   });
   gsap.fromTo("#listaRanking li", { x: -50, opacity: 0 }, { x: 0, opacity: 1, duration: 0.25, stagger: 0.06 });
   const n = (v) => Number(v || 0).toLocaleString("pt-BR");
   $("#statsRanking").innerHTML = [
     ["HERÓIS", st.total_jogadores], ["PARTIDAS", st.total_partidas], ["MOEDAS", st.total_moedas],
-    ["BUGS DERROTADOS", st.total_inimigos], ["RECORDE", st.recorde],
+    ["BUGS DERROTADOS", st.total_inimigos], ["REI GLITCH CAIU", st.total_chefes ?? 0], ["RECORDE", st.recorde],
   ].map(([a, b]) => `<div><b>${n(b)}</b>${a}</div>`).join("");
   gsap.fromTo(".ranking", { scale: 0.92, opacity: 0 }, { scale: 1, opacity: 1, duration: 0.3, ease: "back.out(1.6)" });
   selecionar(0);
 };
+
+$("#abasRanking").addEventListener("click", (e) => {
+  const b = e.target.closest("[data-periodo]");
+  if (!b || b.dataset.periodo === estado.periodo) return;
+  estado.periodo = b.dataset.periodo;
+  Audio.sfx("menu");
+  aoEntrar.ranking();
+});
 
 // ---------------------------------------------------------------------
 // VILA
@@ -579,13 +601,107 @@ function lerControle() {
 }
 requestAnimationFrame(lerControle);
 
-// botões de toque
+// ---------------------------------------------------------------------
+// CONTROLES DE TOQUE: joystick flutuante + botões A e B
+// ---------------------------------------------------------------------
+const vibrar = (ms) => { try { navigator.vibrate?.(ms); } catch {} };
 $$("[data-toque]").forEach((btn) => {
   const k = btn.dataset.toque;
-  const on = (v) => (e) => { e.preventDefault(); toque[k] = v; btn.classList.toggle("on", v); };
+  const on = (v) => (e) => {
+    e.preventDefault();
+    if (v) { try { btn.setPointerCapture(e.pointerId); } catch {} vibrar(8); }
+    toque[k] = v;
+    btn.classList.toggle("on", v);
+  };
   btn.addEventListener("pointerdown", on(true));
-  ["pointerup", "pointercancel", "pointerleave"].forEach((ev) => btn.addEventListener(ev, on(false)));
+  ["pointerup", "pointercancel", "lostpointercapture"].forEach((ev) => btn.addEventListener(ev, on(false)));
+  btn.addEventListener("contextmenu", (e) => e.preventDefault());
 });
+$("#btnPausaToque").addEventListener("pointerdown", (e) => { e.preventDefault(); toque.pausa = true; vibrar(10); });
+
+(function joystick() {
+  const zona = $("#zonaJoy"), base = $("#joyBase"), pino = $("#joyPino");
+  const RAIO = 44, ZONA_MORTA = 10, CORRER = 34;
+  let id = null, ox = 0, oy = 0;
+  const soltar = () => {
+    id = null;
+    toque.esq = toque.dir = toque.correr = false;
+    base.classList.remove("ativo");
+    base.removeAttribute("style");
+    pino.style.transform = "";
+  };
+  zona.addEventListener("pointerdown", (e) => {
+    e.preventDefault();
+    if (id !== null) return;
+    id = e.pointerId;
+    try { zona.setPointerCapture(id); } catch {}
+    const r = zona.getBoundingClientRect();
+    ox = e.clientX; oy = e.clientY;
+    const w = base.offsetWidth;
+    Object.assign(base.style, { left: `${ox - r.left - w / 2}px`, top: `${oy - r.top - w / 2}px`, bottom: "auto", transform: "none" });
+    base.classList.add("ativo");
+    $("#toque").classList.add("usou");
+  });
+  zona.addEventListener("pointermove", (e) => {
+    if (e.pointerId !== id) return;
+    const dx = Phaser.Math.Clamp(e.clientX - ox, -RAIO, RAIO);
+    const dy = Phaser.Math.Clamp(e.clientY - oy, -RAIO, RAIO);
+    pino.style.transform = `translate(${dx}px, ${dy * 0.5}px)`;
+    const antes = toque.correr;
+    toque.esq = dx < -ZONA_MORTA;
+    toque.dir = dx > ZONA_MORTA;
+    toque.correr = Math.abs(dx) > CORRER;
+    if (toque.correr && !antes) vibrar(6);
+  });
+  ["pointerup", "pointercancel", "lostpointercapture"].forEach((ev) => zona.addEventListener(ev, (e) => { if (e.pointerId === id) soltar(); }));
+})();
+
+// retrato no celular: jogo em cima e controles embaixo
+function atualizarLayout() {
+  const retrato = TOUCH && innerHeight > innerWidth && (estado.tela === "jogo" || estado.tela === "contagem");
+  document.body.classList.toggle("retrato", retrato);
+  requestAnimationFrame(() => Jogo.game?.scale.refresh());
+}
+addEventListener("resize", atualizarLayout);
+screen.orientation?.addEventListener?.("change", atualizarLayout);
+
+// no celular: tela cheia e (no Android) trava na horizontal
+function modoCelular() {
+  if (!TOUCH) return;
+  const el = document.documentElement;
+  if (!document.fullscreenElement && el.requestFullscreen) {
+    el.requestFullscreen({ navigationUI: "hide" })
+      .then(() => screen.orientation?.lock?.("landscape").catch(() => {}))
+      .then(() => setTimeout(atualizarLayout, 300))
+      .catch(() => {});
+  }
+}
+
+// ---------------------------------------------------------------------
+// QR CODE: na expo, o visitante aponta a câmera e joga no próprio celular
+// ---------------------------------------------------------------------
+async function montarQR() {
+  if (TOUCH || !window.qrcode) return;
+  try {
+    const r = await fetch("/api/rede").then((x) => x.json());
+    const url = r.urls?.[0];
+    if (!url) return;
+    const qr = window.qrcode(0, "M");
+    qr.addData(url);
+    qr.make();
+    const n = qr.getModuleCount();
+    const cv = $("#qrCanvas");
+    const tam = Math.floor(cv.width / (n + 2));
+    const off = Math.floor((cv.width - tam * n) / 2);
+    const ctx = cv.getContext("2d");
+    ctx.fillStyle = "#fff"; ctx.fillRect(0, 0, cv.width, cv.height);
+    ctx.fillStyle = "#1b1b2f";
+    for (let y = 0; y < n; y++) for (let x = 0; x < n; x++) if (qr.isDark(y, x)) ctx.fillRect(off + x * tam, off + y * tam, tam, tam);
+    $("#qrUrl").textContent = url.replace(/^https?:\/\//, "");
+    $("#qrBox").hidden = false;
+    gsap.fromTo("#qrBox", { x: 200 }, { x: 0, duration: 0.6, ease: "back.out(1.4)", delay: 1 });
+  } catch { /* sem rede: sem QR */ }
+}
 
 // som e tela cheia
 function alternarSom() {
@@ -639,7 +755,9 @@ async function atualizarStatusBanco() {
     document.fonts.load('10px "VT323"'),
   ]).catch(() => {});
   montarCriador();
+  if (TOUCH) $("#pressStart").textContent = "TOQUE PARA COMEÇAR";
   await Jogo.iniciar($("#jogo"));
+  montarQR();
   await atualizarStatusBanco();
   setInterval(() => { if (!API.online) atualizarStatusBanco(); }, 20_000);
   mostrar("titulo");

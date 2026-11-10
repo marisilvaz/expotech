@@ -19,7 +19,7 @@ if not exist node_modules (
 if not exist .env copy .env.example .env >nul
 
 echo.
-echo  Lembrete: deixe o MySQL ligado no XAMPP ^(botao Start^).
+echo  Lembrete: deixe o MySQL ligado ^(botao Start^).
 echo  Abrindo o jogo em tela cheia em 3 segundos... ^(ALT+F4 fecha^)
 echo.
 start "" cmd /c "timeout /t 3 >nul & start chrome --kiosk --autoplay-policy=no-user-gesture-required http://localhost:3000 || start http://localhost:3000"

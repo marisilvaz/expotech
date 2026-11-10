@@ -56,3 +56,26 @@ FROM jogador_conquistas jc
 JOIN jogadores j  ON j.id = jc.jogador_id
 JOIN conquistas c ON c.codigo = jc.codigo
 WHERE j.id = 1;
+
+-- 10. Quantos visitantes derrotaram o Rei Glitch
+SELECT COUNT(DISTINCT jogador_id) AS derrotaram_o_chefe
+FROM partidas WHERE chefe_derrotado = 1;
+
+-- 11. Até onde as pessoas chegam (funil do jogo)
+SELECT
+  SUM(fase_alcancada >= 1) AS comecaram,
+  SUM(fase_alcancada >= 2) AS chegaram_no_chefe,
+  SUM(chefe_derrotado)     AS venceram
+FROM partidas;
+
+-- 12. PC x celular
+SELECT dispositivo, COUNT(*) AS partidas, ROUND(AVG(pontos)) AS media_pontos
+FROM partidas GROUP BY dispositivo;
+
+-- 13. Ranking só de hoje
+SELECT j.nome, MAX(p.pontos) AS melhor
+FROM partidas p JOIN jogadores j ON j.id = p.jogador_id
+WHERE p.criado_em >= CURDATE()
+GROUP BY j.id, j.nome
+ORDER BY melhor DESC
+LIMIT 10;

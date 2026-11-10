@@ -78,10 +78,24 @@ const SONGS = {
     drum: "k . h . . . h . ".repeat(8),
   },
 };
+// música do chefe (Lá menor, rápida e tensa)
+SONGS.chefe = {
+  bpm: 164,
+  lead: `A4 . A4 C5 . A4 D5 . | C5 . A4 . E5 . D5 C5 | A4 . A4 C5 . A4 E5 . | F5 . E5 . D5 . C5 B4
+         A4 . A4 C5 . A4 D5 . | C5 . A4 . E5 . G5 . | F5 E5 D5 C5 B4 C5 D5 E5 | A5 - - - E5 - . .`,
+  harm: `. E4 . E4 . E4 . E4 | . C4 . C4 . C4 . C4 | . E4 . E4 . E4 . E4 | . D4 . D4 . B3 . B3
+         . E4 . E4 . E4 . E4 | . C4 . C4 . E4 . E4 | . D4 . D4 . B3 . B3 | . E4 . E4 . G#4 . G#4`,
+  bass: `A2 A3 A2 A3 A2 A3 A2 A3 | F2 F3 F2 F3 F2 F3 F2 F3 | A2 A3 A2 A3 A2 A3 A2 A3 | G2 G3 G2 G3 E2 E3 E2 E3
+         A2 A3 A2 A3 A2 A3 A2 A3 | F2 F3 F2 F3 C3 C4 C3 C4 | D2 D3 D2 D3 E2 E3 E2 E3 | E2 E3 E2 E3 E2 E3 G#2 G#3`,
+  drum: "k h s h k k s h ".repeat(8),
+};
+
 const JINGLES = {
   vitoria: { bpm: 170, lead: "C5 E5 G5 C6 . G5 C6 - E6 - - - - - . .", bass: "C3 . C3 . C3 . G2 - C3 - - - - - . ." },
   derrota: { bpm: 110, lead: "G4 . F#4 . F4 . E4 - - - . . . .", bass: "C3 . B2 . A#2 . A2 - - - . . . ." },
   inicio:  { bpm: 190, lead: "G4 C5 E5 G5 E5 G5 C6 - - .", bass: "C3 . C3 . G2 . C3 - - ." },
+  alerta:  { bpm: 150, lead: "A4 . A4 . A4 . F5 - E5 - - - . .", bass: "A2 . A2 . A2 . D3 - E3 - - - . ." },
+  campeao: { bpm: 160, lead: "C5 E5 G5 C6 . C6 D6 . E6 - D6 C6 D6 - E6 - G6 - - - - - . .", bass: "C3 . G2 . C3 . G2 . A2 . E2 . F2 . G2 . C3 - - - - - . ." },
 };
 
 const STEP = 96; // ticks por colcheia (PPQ=192)
@@ -103,6 +117,14 @@ function parseDrum(texto) {
 let partes = [];
 let musicaAtual = null;
 
+// bateria: garante que cada batida comece depois da anterior no mesmo instrumento
+const ultimaBatida = new Map();
+function depoisDe(synth, time) {
+  const t = Math.max(time, (ultimaBatida.get(synth) ?? 0) + 0.003);
+  ultimaBatida.set(synth, t);
+  return t;
+}
+
 function pararPartes() {
   partes.forEach((p) => { p.stop(); p.dispose(); });
   partes = [];
@@ -111,7 +133,7 @@ function pararPartes() {
 function criarParte(track, instr, { loop, subdiv = 1 }) {
   const { eventos, total } = parse(track);
   const p = new T.Part((time, ev) => {
-    instr.triggerAttackRelease(ev.note, `${Math.round(ev.len * STEP * subdiv * 0.92)}i`, time);
+    try { instr.triggerAttackRelease(ev.note, `${Math.round(ev.len * STEP * subdiv * 0.92)}i`, time); } catch { /* ignora a nota */ }
   }, eventos.map((e) => [`${e.step * STEP * subdiv}i`, e]));
   p.loop = loop;
   p.loopEnd = `${total * STEP * subdiv}i`;
@@ -133,9 +155,12 @@ function tocarMusica(nome) {
   partes.push(criarParte(song.bass, bass, { loop: true }).p);
   const d = parseDrum(song.drum);
   const pd = new T.Part((time, ev) => {
-    if (ev.t.includes("k")) kick.triggerAttackRelease("C1", "16n", time);
-    if (ev.t.includes("s")) snare.triggerAttackRelease("16n", time);
-    if (ev.t.includes("h")) hat.triggerAttackRelease("32n", time);
+    // ao trocar de música muito rápido, duas batidas podem cair no mesmo instante: nunca deixa isso virar erro
+    try {
+      if (ev.t.includes("k")) kick.triggerAttackRelease("C1", "16n", time);
+      if (ev.t.includes("s")) snare.triggerAttackRelease("16n", depoisDe(snare, time));
+      if (ev.t.includes("h")) hat.triggerAttackRelease("32n", depoisDe(hat, time));
+    } catch { /* ignora a batida */ }
   }, d.eventos.map((e) => [`${e.step * STEP}i`, e]));
   pd.loop = true; pd.loopEnd = `${d.total * STEP}i`;
   partes.push(pd);
@@ -160,14 +185,22 @@ function tocarJingle(nome, depois) {
 }
 
 // ---------- efeitos ----------
+// cada sintetizador precisa de um horário de início sempre maior que o anterior
+const ultimoInicio = new Map();
+function horario(synth) {
+  const t = Math.max(T.now(), (ultimoInicio.get(synth) ?? 0) + 0.005);
+  ultimoInicio.set(synth, t);
+  return t;
+}
 function sweep(f1, f2, dur, synth = sfxSweep) {
-  const t = T.now();
+  const t = horario(synth);
   synth.triggerAttack(f1, t);
   synth.frequency.cancelScheduledValues(t);
   synth.frequency.setValueAtTime(f1, t);
   synth.frequency.exponentialRampToValueAtTime(f2, t + dur);
   synth.triggerRelease(t + dur);
 }
+function ruido(dur) { sfxNoise.triggerAttackRelease(dur, horario(sfxNoise)); }
 function arpejo(notas, passo = 0.04, dur = "32n") {
   const t = T.now();
   notas.forEach((n, i) => sfxPoly.triggerAttackRelease(n, dur, t + i * passo));
@@ -177,9 +210,9 @@ const SFX = {
   pulo: () => sweep(260, 760, 0.13),
   puloDuplo: () => sweep(420, 1200, 0.12),
   moeda: () => arpejo(["A5", "C#6", "E6", "A6"], 0.035),
-  pisar: () => { sfxNoise.triggerAttackRelease("16n"); sweep(320, 70, 0.12, sfxTri); },
+  pisar: () => { ruido("16n"); sweep(320, 70, 0.12, sfxTri); },
   bater: () => sweep(140, 90, 0.08, sfxTri),
-  quebrar: () => { sfxNoise.triggerAttackRelease("8n"); sweep(260, 60, 0.18, sfxTri); },
+  quebrar: () => { ruido("8n"); sweep(260, 60, 0.18, sfxTri); },
   bloco: () => { sweep(140, 90, 0.06, sfxTri); arpejo(["E6", "B6"], 0.05); },
   turbo: () => arpejo(["C5", "E5", "G5", "C6", "E6", "G6", "C7", "E7"], 0.05, "16n"),
   dano: () => sweep(700, 120, 0.35),
@@ -191,6 +224,14 @@ const SFX = {
   sortear: () => arpejo(["C5", "G5", "E5", "C6", "A5", "E6"], 0.03, "64n"),
   salvo: () => arpejo(["G5", "B5", "D6", "G6"], 0.06, "16n"),
   conquista: () => arpejo(["E6", "G6", "B6", "E7", "B6", "E7"], 0.06, "16n"),
+  laser: () => sweep(1600, 420, 0.09),
+  coracao: () => arpejo(["C6", "E6", "G6", "C7"], 0.07, "16n"),
+  disquete: () => arpejo(["G5", "D6", "G6", "B6", "D7"], 0.05, "16n"),
+  rugido: () => { ruido("4n"); sweep(180, 50, 0.6, sfxTri); },
+  chefeDano: () => { sweep(900, 200, 0.18); ruido("16n"); },
+  explosao: () => { ruido("2n"); sweep(220, 40, 0.5, sfxTri); },
+  tremor: () => { ruido("8n"); sweep(90, 40, 0.25, sfxTri); },
+  tiroChefe: () => sweep(500, 900, 0.07),
 };
 
 export const Audio = {
@@ -205,8 +246,12 @@ export const Audio = {
   parar() { pararPartes(); TR.stop(); musicaAtual = null; },
   sfx(nome) { if (iniciado && SFX[nome]) try { SFX[nome](); } catch { /* ignora sobreposição */ } },
   turbo(ligado) {
-    if (!iniciado || musicaAtual !== "fase") return;
-    TR.bpm.rampTo(SONGS.fase.bpm * (ligado ? 1.18 : 1), 0.3);
+    if (!iniciado || !SONGS[musicaAtual]) return;
+    TR.bpm.rampTo(SONGS[musicaAtual].bpm * (ligado ? 1.18 : 1), 0.3);
+  },
+  acelerar(fator) {
+    if (!iniciado || !SONGS[musicaAtual]) return;
+    TR.bpm.rampTo(SONGS[musicaAtual].bpm * fator, 0.5);
   },
   get mudo() { return mudo; },
   alternarMudo() {

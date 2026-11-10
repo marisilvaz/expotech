@@ -7,10 +7,13 @@ const CONQUISTAS_OFFLINE = {
   primeira_partida: { titulo: "Primeiro Passo", descricao: "Jogou a primeira partida na Expotech", icone: "★" },
   colecionador: { titulo: "Colecionador", descricao: "Pegou 30 moedas ou mais em uma partida", icone: "●" },
   cacador_bugs: { titulo: "Caçador de Bugs", descricao: "Derrotou 6 inimigos em uma partida", icone: "✖" },
-  vencedor: { titulo: "Missão Cumprida", descricao: "Chegou ao portal no fim da fase", icone: "▲" },
-  veloz: { titulo: "Veloz", descricao: "Terminou a fase em menos de 90 segundos", icone: "»" },
-  intocavel: { titulo: "Intocável", descricao: "Terminou a fase sem perder nenhuma vida", icone: "♥" },
-  lenda: { titulo: "Lenda da Expo", descricao: "Fez 15.000 pontos ou mais", icone: "♛" },
+  vencedor: { titulo: "Missão Cumprida", descricao: "Atravessou o portal da Fase 1", icone: "▲" },
+  veloz: { titulo: "Veloz", descricao: "Venceu o jogo em menos de 3 minutos", icone: "»" },
+  intocavel: { titulo: "Intocável", descricao: "Venceu o jogo sem perder nenhuma vida", icone: "♥" },
+  lenda: { titulo: "Lenda da Expo", descricao: "Fez 30.000 pontos ou mais", icone: "♛" },
+  chefe: { titulo: "Derrubou o Rei", descricao: "Derrotou o Rei Glitch na Sala dos Servidores", icone: "⚔" },
+  arquivista: { titulo: "Arquivista", descricao: "Achou os 3 disquetes escondidos", icone: "▣" },
+  mobile: { titulo: "Jogador Mobile", descricao: "Jogou pelo celular", icone: "▯" },
 };
 
 let online = null;
@@ -32,10 +35,13 @@ const local = {
     catch { return { jogadores: [], partidas: [], conquistas: [] }; }
   },
   gravar(db) { try { localStorage.setItem("expo_db", JSON.stringify(db)); } catch {} },
-  ranking(db, limite = 10) {
+  ranking(db, limite = 10, periodo = "geral") {
     const porJogador = new Map();
+    const hoje = new Date().toDateString();
     for (const p of db.partidas) {
-      const r = porJogador.get(p.jogador_id) ?? { melhor_pontuacao: 0, partidas_jogadas: 0, vitorias: 0, melhor_tempo: null };
+      if (periodo === "hoje" && new Date(p.criado_em).toDateString() !== hoje) continue;
+      const r = porJogador.get(p.jogador_id) ?? { melhor_pontuacao: 0, partidas_jogadas: 0, vitorias: 0, chefes: 0, melhor_tempo: null };
+      if (p.chefe_derrotado) r.chefes++;
       r.melhor_pontuacao = Math.max(r.melhor_pontuacao, p.pontos);
       r.partidas_jogadas++;
       if (p.venceu) { r.vitorias++; r.melhor_tempo = r.melhor_tempo == null ? p.tempo_seg : Math.min(r.melhor_tempo, p.tempo_seg); }
@@ -80,10 +86,13 @@ export const API = {
     const ganhou = ["primeira_partida"];
     if (dados.moedas >= 30) ganhou.push("colecionador");
     if (dados.inimigos >= 6) ganhou.push("cacador_bugs");
-    if (dados.venceu) ganhou.push("vencedor");
-    if (dados.venceu && dados.tempo_seg < 90) ganhou.push("veloz");
+    if (dados.fase_alcancada >= 2) ganhou.push("vencedor");
+    if (dados.venceu) ganhou.push("chefe");
+    if (dados.venceu && dados.tempo_seg < 180) ganhou.push("veloz");
     if (dados.venceu && dados.sem_dano) ganhou.push("intocavel");
-    if (dados.pontos >= 15000) ganhou.push("lenda");
+    if (dados.disquetes >= 3) ganhou.push("arquivista");
+    if (dados.dispositivo === "celular") ganhou.push("mobile");
+    if (dados.pontos >= 30000) ganhou.push("lenda");
     const novas = ganhou.filter((c) => !db.conquistas.some((x) => x.jogador_id === dados.jogador_id && x.codigo === c));
     novas.forEach((c) => db.conquistas.push({ jogador_id: dados.jogador_id, codigo: c }));
     local.gravar(db);
@@ -96,9 +105,9 @@ export const API = {
     };
   },
 
-  async ranking(limite = 10) {
-    if (online) { try { return await req("GET", `/ranking?limite=${limite}`); } catch { online = false; } }
-    return local.ranking(local.ler(), limite);
+  async ranking(limite = 10, periodo = "geral") {
+    if (online) { try { return await req("GET", `/ranking?limite=${limite}&periodo=${periodo}`); } catch { online = false; } }
+    return local.ranking(local.ler(), limite, periodo);
   },
 
   async estatisticas() {
@@ -109,6 +118,7 @@ export const API = {
       total_jogadores: db.jogadores.length, total_partidas: db.partidas.length,
       total_moedas: soma("moedas"), total_inimigos: soma("inimigos"),
       total_vitorias: db.partidas.filter((p) => p.venceu).length,
+      total_chefes: db.partidas.filter((p) => p.chefe_derrotado).length,
       recorde: Math.max(0, ...db.partidas.map((p) => p.pontos)),
     };
   },
