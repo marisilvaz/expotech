@@ -4,7 +4,10 @@
 // =====================================================================
 import express from "express";
 import mysql from "mysql2/promise";
-import { readFile } from "node:fs/promises";
+import { readFile, readdir, stat } from "node:fs/promises";
+import { createHash } from "node:crypto";
+import { promisify } from "node:util";
+import zlib from "node:zlib";
 import { fileURLToPath } from "node:url";
 import path from "node:path";
 import os from "node:os";
@@ -82,6 +85,47 @@ async function migrar(conexao) {
     ["dispositivo", "ENUM('pc','celular') NOT NULL DEFAULT 'pc' AFTER disquetes"],
   ];
   for (const [col, def] of novas) if (colsP.length && !temP.has(col)) await conexao.query(`ALTER TABLE ${tp} ADD COLUMN ${col} ${def}`);
+}
+
+// ---------------------------------------------------------------------
+// Endereço público (ngrok): o QR code da tela inicial aponta direto para ele.
+// O ngrok tem uma API local (porta 4040) que informa a URL da vez; como ela muda
+// toda vez que o ngrok é ligado, o servidor pergunta de novo a cada poucos segundos.
+// Se preferir fixar um endereço, coloque PUBLIC_URL=https://... no arquivo .env
+// ---------------------------------------------------------------------
+const NGROK_APIS = process.env.NGROK_API
+  ? [process.env.NGROK_API]
+  : [4040, 4041, 4042].map((p) => `http://127.0.0.1:${p}`);
+let publica = { url: null, em: 0, buscando: null };
+
+async function buscarNgrok() {
+  for (const base of NGROK_APIS) {
+    try {
+      const r = await fetch(`${base}/api/tunnels`, { signal: AbortSignal.timeout(700) });
+      if (!r.ok) continue;
+      const { tunnels = [] } = await r.json();
+      const daPorta = tunnels.filter((t) => new RegExp(`(^|[:/])${CONFIG.porta}$`).test(String(t.config?.addr ?? "")));
+      const lista = daPorta.length ? daPorta : tunnels;
+      const t = lista.find((x) => String(x.public_url).startsWith("https://")) || lista[0];
+      if (t?.public_url) return String(t.public_url).replace(/\/+$/, "");
+    } catch { /* ngrok desligado nesta porta */ }
+  }
+  return null;
+}
+
+async function urlPublica() {
+  if (process.env.PUBLIC_URL) return process.env.PUBLIC_URL.replace(/\/+$/, "");
+  if (Date.now() - publica.em < 5000) return publica.url;
+  publica.buscando ??= buscarNgrok().then((url) => {
+    if (url !== publica.url) {
+      console.log(url
+        ? `\n  🌍 ngrok ligado! O QR code agora aponta para:  ${url}\n`
+        : "\n  🌍 ngrok desligado: o QR code voltou para o endereço da rede local.\n");
+    }
+    publica = { url, em: Date.now(), buscando: null };
+    return url;
+  });
+  return publica.buscando;
 }
 
 // Endereços desta máquina na rede local (para o QR code dos celulares)
@@ -254,8 +298,12 @@ api.get("/jogadores/:id/conquistas", async (req, res) => {
 });
 
 // endereços para jogar pelo celular (fora do bloqueio de banco: funciona mesmo offline)
-app.get("/api/rede", (_req, res) => {
-  res.json({ urls: enderecosRede().map((ip) => `http://${ip}:${CONFIG.porta}`) });
+app.get("/api/rede", async (_req, res) => {
+  res.set("Cache-Control", "no-store");
+  res.json({
+    publica: await urlPublica(),
+    urls: enderecosRede().map((ip) => `http://${ip}:${CONFIG.porta}`),
+  });
 });
 
 app.use("/api", api);
@@ -265,7 +313,179 @@ app.use((err, _req, res, _next) => {
   res.status(500).json({ erro: "Falha no servidor/banco" });
 });
 
-app.use(express.static(path.join(__dirname, "public"), { extensions: ["html"] }));
+// ---------------------------------------------------------------------
+// ARQUIVOS DO JOGO, servidos de forma leve (importante pela internet/ngrok):
+//  - HTML, JS e CSS saem compactados (brotli ou gzip): ~2 MB viram ~0,5 MB
+//  - a compactação é feita uma vez e fica guardada na memória
+//  - bibliotecas, fontes e ícones ficam em cache no aparelho do visitante
+// ---------------------------------------------------------------------
+const PUBLICO = path.join(__dirname, "public");
+const TIPOS = {
+  ".html": "text/html; charset=utf-8", ".js": "text/javascript; charset=utf-8", ".css": "text/css; charset=utf-8",
+  ".json": "application/json; charset=utf-8", ".webmanifest": "application/manifest+json; charset=utf-8",
+  ".svg": "image/svg+xml; charset=utf-8",
+};
+const brotli = promisify(zlib.brotliCompress);
+const gzip = promisify(zlib.gzip);
+const guardados = new Map(); // arquivo → { mtimeMs, etag, cru, br, gz }
+const cacheDe = (rel) => (/^\/(vendor|icones)\//.test(rel) ? "public, max-age=2592000" : "no-cache");
+
+async function lerGuardado(arq) {
+  const st = await stat(arq);
+  let item = guardados.get(arq);
+  if (!item || item.mtimeMs !== st.mtimeMs) {
+    const cru = await readFile(arq);
+    item = { mtimeMs: st.mtimeMs, cru, etag: `"${st.size.toString(16)}-${Math.round(st.mtimeMs).toString(16)}"` };
+    guardados.set(arq, item);
+  }
+  return item;
+}
+const comBrotli = (item) => (item.br ??= brotli(item.cru, { params: {
+  [zlib.constants.BROTLI_PARAM_QUALITY]: 9, [zlib.constants.BROTLI_PARAM_SIZE_HINT]: item.cru.length,
+} }));
+const comGzip = (item) => (item.gz ??= gzip(item.cru, { level: 9 }));
+
+// envia um arquivo guardado na memória, já compactado do jeito que o aparelho aceita
+async function enviar(req, res, item, tipo, cache) {
+  res.set({ "Content-Type": tipo, ETag: item.etag, Vary: "Accept-Encoding", "Cache-Control": cache });
+  if (req.headers["if-none-match"] === item.etag) return res.status(304).end();
+  const aceita = String(req.headers["accept-encoding"] || "");
+  let corpo = item.cru;
+  if (item.cru.length > 1024) {
+    if (/\bbr\b/.test(aceita)) { corpo = await comBrotli(item); res.set("Content-Encoding", "br"); }
+    else if (/\bgzip\b/.test(aceita)) { corpo = await comGzip(item); res.set("Content-Encoding", "gzip"); }
+  }
+  res.set("Content-Length", String(corpo.length));
+  res.end(req.method === "HEAD" ? undefined : corpo);
+}
+
+// ---------------------------------------------------------------------
+// PACOTES: em vez de ~20 arquivos de código, o visitante baixa só 2
+//   /pacote/libs-XXXX.js  → Phaser + GSAP + Tone + QR code, um atrás do outro
+//   /pacote/jogo-XXXX.js  → todo o código do jogo (public/js) junto e minificado
+// Menos arquivos = carrega mais rápido pelo ngrok e gasta menos da cota gratuita dele.
+// Os pacotes são montados sozinhos ao ligar o servidor e refeitos quando um arquivo muda:
+// continue editando os arquivos em public/js normalmente.
+// Para desligar (testes), coloque PACOTES=0 no .env
+// ---------------------------------------------------------------------
+const LIBS = ["phaser.min.js", "gsap.min.js", "TextPlugin.min.js", "Tone.js", "qrcode.js"];
+let esbuild = null;
+if (process.env.PACOTES !== "0") {
+  try { esbuild = await import("esbuild"); } catch { console.log("  [i] esbuild não instalado (rode npm install): o jogo funciona, só carrega em mais arquivos."); }
+}
+let pacotes = { assinatura: "", conferidoEm: 0, montando: null, html: null, libs: null, jogo: null };
+
+async function listarJs(dir) {
+  const saida = [];
+  for (const e of await readdir(dir, { withFileTypes: true })) {
+    const arq = path.join(dir, e.name);
+    if (e.isDirectory()) saida.push(...await listarJs(arq));
+    else if (e.name.endsWith(".js")) saida.push(arq);
+  }
+  return saida;
+}
+const novoItem = (cru) => ({ cru, etag: `"${createHash("sha1").update(cru).digest("hex").slice(0, 16)}"` });
+const marca = (item) => item.etag.slice(1, 11);
+
+async function montarPacotes() {
+  const fontes = [path.join(PUBLICO, "index.html"), ...LIBS.map((l) => path.join(PUBLICO, "vendor", l)), ...await listarJs(path.join(PUBLICO, "js"))];
+  const assinatura = (await Promise.all(fontes.map(async (f) => `${f}:${(await stat(f)).mtimeMs}`))).join("|");
+  if (assinatura === pacotes.assinatura) return;
+  let html = await readFile(fontes[0], "utf8");
+  const preloads = [];
+
+  // bibliotecas: simplesmente uma atrás da outra
+  const partes = await Promise.all(LIBS.map((l) => readFile(path.join(PUBLICO, "vendor", l))));
+  const libs = novoItem(Buffer.concat(partes.flatMap((b) => [b, Buffer.from("\n;\n")])));
+  const tagsLibs = LIBS.map((l) => `<script src="vendor/${l}"></script>`);
+  if (tagsLibs.every((t) => html.includes(t))) {
+    html = html.replace(tagsLibs[0], `<script src="pacote/libs-${marca(libs)}.js"></script>`);
+    tagsLibs.slice(1).forEach((t) => { html = html.replace(t, ""); });
+    html = html.replace(/^\s*<link rel="preload" href="vendor\/[^"]+\.js" as="script">\n/gm, "");
+    preloads.push(`<link rel="preload" href="pacote/libs-${marca(libs)}.js" as="script">`);
+  }
+
+  // código do jogo: empacotado pelo esbuild (se estiver instalado)
+  let jogo = null;
+  const tagJogo = '<script type="module" src="js/app.js"></script>';
+  if (esbuild && html.includes(tagJogo)) {
+    try {
+      const r = await esbuild.build({
+        entryPoints: [path.join(PUBLICO, "js", "app.js")], bundle: true, format: "esm", minify: true,
+        write: false, target: ["es2019"], legalComments: "none", logLevel: "silent",
+      });
+      jogo = novoItem(Buffer.from(r.outputFiles[0].contents));
+      html = html.replace(tagJogo, `<script type="module" src="pacote/jogo-${marca(jogo)}.js"></script>`);
+      html = html.replace(/^\s*<link rel="modulepreload" href="js\/[^"]+">\n/gm, "");
+      preloads.push(`<link rel="modulepreload" href="pacote/jogo-${marca(jogo)}.js">`);
+    } catch (e) {
+      console.error("  [!] Não consegui empacotar o código do jogo (erro de digitação em algum .js?):");
+      console.error("      " + String(e.message).split("\n").slice(0, 3).join("\n      "));
+      console.error("      Servindo os arquivos separados por enquanto.");
+    }
+  }
+  html = html.replace("</head>", `  ${preloads.join("\n  ")}\n</head>`);
+  pacotes = { ...pacotes, assinatura, html: novoItem(Buffer.from(html)), libs, jogo };
+}
+async function pacotesProntos() {
+  if (process.env.PACOTES === "0") return null;
+  if (Date.now() - pacotes.conferidoEm > 2000) {
+    pacotes.montando ??= montarPacotes()
+      .catch((e) => console.error("  [!] Pacotes:", e.message))
+      .finally(() => { pacotes.conferidoEm = Date.now(); pacotes.montando = null; });
+  }
+  if (pacotes.montando) await pacotes.montando;
+  return pacotes.html ? pacotes : null;
+}
+
+app.get(/^\/pacote\/(libs|jogo)-[0-9a-f]+\.js$/, async (req, res, next) => {
+  const p = await pacotesProntos();
+  const item = p?.[req.params[0]];
+  if (!item) return next();
+  // o nome muda quando o conteúdo muda: pode ficar guardado no aparelho para sempre
+  await enviar(req, res, item, TIPOS[".js"], "public, max-age=31536000, immutable");
+});
+
+app.use(async (req, res, next) => {
+  if (req.method !== "GET" && req.method !== "HEAD") return next();
+  try {
+    let rel = decodeURIComponent(req.path);
+    if (rel.endsWith("/")) rel += "index.html";
+    const ext = path.extname(rel).toLowerCase();
+    if (!TIPOS[ext]) return next();
+    if (rel === "/index.html") {
+      const p = await pacotesProntos();
+      if (p) return await enviar(req, res, p.html, TIPOS[ext], "no-cache");
+    }
+    const arq = path.join(PUBLICO, rel);
+    if (!arq.startsWith(PUBLICO + path.sep)) return next();
+    await enviar(req, res, await lerGuardado(arq), TIPOS[ext], cacheDe(rel));
+  } catch { next(); } // arquivo não existe (ou nome estranho): segue o fluxo normal
+});
+
+// imagens e fontes (já são compactadas por natureza)
+app.use(express.static(PUBLICO, {
+  extensions: ["html"],
+  setHeaders: (res, arq) => {
+    const rel = "/" + path.relative(PUBLICO, arq).split(path.sep).join("/");
+    res.set("Cache-Control", cacheDe(rel));
+  },
+}));
+
+// deixa tudo compactado antes do primeiro visitante chegar
+async function aquecer(dir = PUBLICO) {
+  if (dir === PUBLICO) {
+    const p = await pacotesProntos();
+    if (p) await Promise.all([p.html, p.libs, p.jogo].filter(Boolean).flatMap((i) => [comBrotli(i), comGzip(i)]));
+  }
+  for (const e of await readdir(dir, { withFileTypes: true })) {
+    const arq = path.join(dir, e.name);
+    if (e.isDirectory()) await aquecer(arq);
+    else if (TIPOS[path.extname(e.name).toLowerCase()]) {
+      try { const item = await lerGuardado(arq); if (item.cru.length > 1024) await Promise.all([comBrotli(item), comGzip(item)]); } catch { /* ignora */ }
+    }
+  }
+}
 
 // ---------------------------------------------------------------------
 // Tenta conectar; se o MySQL ainda não estiver ligado, tenta de novo a cada 10s
@@ -279,7 +499,7 @@ async function conectar() {
     if (!avisou) {
       avisou = true;
       console.error("✖ Não consegui conectar no MySQL:", e.message);
-      console.error("  Confira se o MySQL está ligado e os dados no arquivo .env");
+      console.error("  Confira se o MySQL está ligado (XAMPP → Start em MySQL) e os dados no arquivo .env");
       console.error("  O jogo funciona mesmo assim, salvando só no navegador (modo offline).");
       console.error("  Vou tentar de novo a cada 10 segundos...");
     }
@@ -294,7 +514,10 @@ app.listen(CONFIG.porta, "0.0.0.0", () => {
   if (ips.length) {
     console.log("\n  📱 Nos celulares (mesma rede Wi-Fi), acesse:");
     ips.forEach((ip) => console.log(`       http://${ip}:${CONFIG.porta}`));
-    console.log("     (o QR code aparece na tela inicial do jogo)");
   }
-  console.log("");
+  console.log("\n  🌍 Pela internet: rode  ngrok http " + CONFIG.porta + "  em outra janela.");
+  console.log("     O QR code da tela inicial passa a apontar para o endereço do ngrok sozinho.\n");
+  aquecer().catch(() => {});
+  urlPublica().catch(() => {});
+  setInterval(() => urlPublica().catch(() => {}), 15_000).unref();
 });

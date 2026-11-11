@@ -12,9 +12,35 @@
   <title>Expotech Pixel Quest</title>
   <meta name="theme-color" content="#1b1b2f">
   <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 8 8' shape-rendering='crispEdges'><rect x='2' y='0' width='4' height='1' fill='%231b1b2f'/><rect x='1' y='1' width='6' height='6' fill='%23ffd23f'/><rect x='2' y='7' width='4' height='1' fill='%231b1b2f'/><rect x='3' y='2' width='1' height='4' fill='%23fff2a8'/></svg>">
+  <!-- tela de carregamento: aparece na hora, antes de qualquer outro arquivo chegar -->
+  <style>
+    #carregando { position: fixed; inset: 0; z-index: 9999; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 18px;
+      background: #1b1b2f; color: #fff35c; font: bold 16px/1 "Press Start 2P", ui-monospace, Menlo, Consolas, monospace; letter-spacing: 2px; }
+    #carregando i { display: block; width: 180px; height: 14px; border: 3px solid #fff; padding: 2px; box-sizing: content-box; overflow: hidden; }
+    #carregando i::before { content: ""; display: block; width: 45px; height: 100%; background: #45e070; animation: carregando 1s steps(8) infinite; }
+    @keyframes carregando { from { transform: translateX(-45px); } to { transform: translateX(180px); } }
+  </style>
+  <!-- carregamento em paralelo (faz diferença pela internet/ngrok) -->
+  <link rel="preload" href="vendor/fonts/press-start-2p.woff2" as="font" type="font/woff2" crossorigin>
+  <link rel="preload" href="vendor/fonts/vt323.woff2" as="font" type="font/woff2" crossorigin>
   <link rel="stylesheet" href="css/style.css">
+  <link rel="preload" href="vendor/phaser.min.js" as="script">
+  <link rel="preload" href="vendor/Tone.js" as="script">
+  <link rel="modulepreload" href="js/api.js">
+  <link rel="modulepreload" href="js/audio.js">
+  <link rel="modulepreload" href="js/sprites.js">
+  <link rel="modulepreload" href="js/game/index.js">
+  <link rel="modulepreload" href="js/game/textures.js">
+  <link rel="modulepreload" href="js/game/fase.js">
+  <link rel="modulepreload" href="js/game/chefe.js">
+  <link rel="modulepreload" href="js/game/cenario.js">
+  <link rel="modulepreload" href="js/game/level-data.js">
+  <link rel="modulepreload" href="js/game/input.js">
+  <link rel="modulepreload" href="js/game/texto.js">
+  <link rel="modulepreload" href="js/game/vila.js">
 </head>
 <body>
+  <div id="carregando" aria-live="polite">CARREGANDO...<i></i></div>
 
   <!-- Jogo Phaser (vila no fundo + fase) -->
   <div id="jogo"></div>

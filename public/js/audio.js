@@ -140,8 +140,12 @@ function criarParte(track, instr, { loop, subdiv = 1 }) {
   return { p, dur: total * STEP * subdiv };
 }
 
+// música pedida enquanto o som ainda não foi liberado pelo navegador: toca assim que liberar
+let pendente = null;
+
 function tocarMusica(nome) {
-  if (!iniciado || musicaAtual === nome) return;
+  if (!iniciado) { if (SONGS[nome]) pendente = nome; return; }
+  if (musicaAtual === nome) return;
   const song = SONGS[nome];
   if (!song) return;
   pararPartes();
@@ -169,7 +173,7 @@ function tocarMusica(nome) {
 }
 
 function tocarJingle(nome, depois) {
-  if (!iniciado) return;
+  if (!iniciado) { if (SONGS[depois]) pendente = depois; return; }
   const j = JINGLES[nome];
   pararPartes();
   TR.stop();
@@ -235,15 +239,26 @@ const SFX = {
 };
 
 export const Audio = {
+  // Liga o som. Precisa ser chamado dentro de um toque/clique/tecla.
+  // No iPhone o navegador pode recusar (ex.: no começo do toque): por isso NUNCA
+  // trava o jogo esperando o áudio, e pode ser chamado de novo no próximo toque.
   async iniciar() {
-    if (iniciado) return;
-    await T.start();
-    iniciado = true;
+    const ctx = T.getContext().rawContext;
+    if (ctx.state !== "running") {
+      try { await Promise.race([T.start(), new Promise((r) => setTimeout(r, 500))]); } catch { /* tenta no próximo toque */ }
+    }
+    if (ctx.state !== "running") return false;
+    if (!iniciado) {
+      iniciado = true;
+      if (pendente) { const m = pendente; pendente = null; tocarMusica(m); }
+    }
+    return true;
   },
+  get rodando() { return iniciado && T.getContext().rawContext.state === "running"; },
   get iniciado() { return iniciado; },
   musica: (nome) => tocarMusica(nome),
   jingle: (nome, depois) => tocarJingle(nome, depois),
-  parar() { pararPartes(); TR.stop(); musicaAtual = null; },
+  parar() { pendente = null; if (!iniciado) return; pararPartes(); TR.stop(); musicaAtual = null; },
   sfx(nome) { if (iniciado && SFX[nome]) try { SFX[nome](); } catch { /* ignora sobreposição */ } },
   turbo(ligado) {
     if (!iniciado || !SONGS[musicaAtual]) return;

@@ -144,11 +144,12 @@ aoEntrar.titulo = () => {
   }
 };
 
-async function pressStart() {
+function pressStart() {
   if (estado.iniciado) return;
   estado.iniciado = true;
-  await Audio.iniciar();
-  Audio.jingle("inicio", "titulo");
+  estado.menuDesde = performance.now();
+  // o som liga em segundo plano: o menu aparece na hora, mesmo se o navegador segurar o áudio (iPhone)
+  Audio.iniciar().then(() => { if (estado.tela === "titulo") Audio.jingle("inicio", "titulo"); });
   gsap.to("#pressStart", { scale: 1.4, opacity: 0, duration: 0.25, onComplete: () => { $("#pressStart").hidden = true; } });
   $("#menuTitulo").hidden = false;
   gsap.fromTo("#menuTitulo li", { x: -60, opacity: 0 }, { x: 0, opacity: 1, duration: 0.3, stagger: 0.07 });
@@ -158,6 +159,8 @@ async function pressStart() {
 $("#menuTitulo").addEventListener("click", (e) => {
   const li = e.target.closest("li");
   if (!li) return;
+  // o toque que "aperta start" não pode escolher, sem querer, a opção que aparece embaixo do dedo
+  if (performance.now() - (estado.menuDesde || 0) < 400) return;
   Audio.sfx("ok");
   const acao = li.dataset.acao;
   if (acao === "jogar") {
@@ -567,6 +570,11 @@ document.addEventListener("pointerdown", (e) => {
   if (atividade()) { e.preventDefault(); e.stopPropagation(); return; }
   if (!estado.iniciado) pressStart();
 }, true);
+// iPhone/Safari só libera o som no FIM do toque (ou no clique): tenta de novo nesses momentos,
+// e também religa o som se o celular tiver pausado o áudio (ligação, troca de aplicativo)
+["pointerup", "touchend", "click", "keydown"].forEach((ev) => {
+  document.addEventListener(ev, () => { if (estado.iniciado && !Audio.rodando) Audio.iniciar(); }, { capture: true, passive: true });
+});
 let ultimoMove = 0;
 document.addEventListener("pointermove", () => { if (Date.now() - ultimoMove > 1000) { ultimoMove = Date.now(); estado.ultimaAtividade = Date.now(); } });
 
@@ -680,17 +688,26 @@ function modoCelular() {
 // ---------------------------------------------------------------------
 // QR CODE: na expo, o visitante aponta a câmera e joga no próprio celular
 // ---------------------------------------------------------------------
+let qrAtual = "";
+const enderecoLocal = (h) => /^(localhost|127\.|10\.|192\.168\.|172\.(1[6-9]|2\d|3[01])\.|\[?::1)/.test(h);
 async function montarQR() {
   if (TOUCH || !window.qrcode) return;
   try {
-    const r = await fetch("/api/rede").then((x) => x.json());
-    const url = r.urls?.[0];
-    if (!url) return;
+    const r = await fetch("/api/rede", { cache: "no-store" }).then((x) => x.json());
+    // prioridade: endereço público (ngrok) → o próprio endereço, se a página já foi aberta pela internet → rede local
+    const url = r.publica || (!enderecoLocal(location.hostname) ? location.origin : r.urls?.[0]);
+    if (!url || url === qrAtual) return;
+    const primeiro = !qrAtual;
+    qrAtual = url;
     const qr = window.qrcode(0, "M");
     qr.addData(url);
     qr.make();
     const n = qr.getModuleCount();
     const cv = $("#qrCanvas");
+    $("#qrBox").hidden = false;
+    // desenha na resolução real da tela, com cada quadradinho em pixels inteiros (leitura mais fácil)
+    const lado = Math.round(cv.getBoundingClientRect().width * (devicePixelRatio || 1)) || 264;
+    cv.width = cv.height = Math.max(lado, (n + 2) * 2);
     const tam = Math.floor(cv.width / (n + 2));
     const off = Math.floor((cv.width - tam * n) / 2);
     const ctx = cv.getContext("2d");
@@ -699,7 +716,8 @@ async function montarQR() {
     for (let y = 0; y < n; y++) for (let x = 0; x < n; x++) if (qr.isDark(y, x)) ctx.fillRect(off + x * tam, off + y * tam, tam, tam);
     $("#qrUrl").textContent = url.replace(/^https?:\/\//, "");
     $("#qrBox").hidden = false;
-    gsap.fromTo("#qrBox", { x: 200 }, { x: 0, duration: 0.6, ease: "back.out(1.4)", delay: 1 });
+    if (primeiro) gsap.fromTo("#qrBox", { x: 200 }, { x: 0, duration: 0.6, ease: "back.out(1.4)", delay: 1 });
+    else gsap.fromTo("#qrBox", { scale: 1.12 }, { scale: 1, duration: 0.4, ease: "back.out(2)" });
   } catch { /* sem rede: sem QR */ }
 }
 
@@ -725,7 +743,8 @@ setInterval(() => {
   if (["criador", "ranking", "vila", "resultado"].includes(estado.tela) && !estado.modoAtracao && parado > OCIOSO_MENU_MS) {
     voltarAoInicio();
     estado.ultimaAtividade = Date.now();
-  } else if (estado.tela === "titulo" && parado > ATRACAO_MS) {
+  } else if (estado.tela === "titulo" && parado > ATRACAO_MS && !TOUCH && !document.hidden) {
+    // vitrine automática só no computador do estande: no celular do visitante ela gastaria internet (e cota do ngrok) à toa
     estado.modoAtracao = true;
     estado.ultimaAtividade = Date.now();
     irPara("ranking");
@@ -758,8 +777,11 @@ async function atualizarStatusBanco() {
   if (TOUCH) $("#pressStart").textContent = "TOQUE PARA COMEÇAR";
   await Jogo.iniciar($("#jogo"));
   montarQR();
-  await atualizarStatusBanco();
-  setInterval(() => { if (!API.online) atualizarStatusBanco(); }, 20_000);
+  // o endereço do ngrok muda a cada vez que ele é ligado: o computador do estande confere de tempos em tempos
+  if (enderecoLocal(location.hostname)) setInterval(montarQR, 15_000);
   mostrar("titulo");
-  carregarVila();
+  document.getElementById("carregando")?.remove();
+  // o banco responde em segundo plano: a tela inicial não espera a rede
+  atualizarStatusBanco().then(() => { carregarVila(); if (estado.tela === "titulo") atualizarTicker(); });
+  setInterval(() => { if (!API.online) atualizarStatusBanco(); }, 20_000);
 })();

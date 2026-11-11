@@ -12,9 +12,10 @@ Sprites, músicas e efeitos sonoros foram feitos do zero, em código, para este 
 
 ### 1. Instale (uma vez só)
 - **Node.js LTS** (20.12 ou mais novo): https://nodejs.org
+- **XAMPP** (traz o MySQL/MariaDB): https://www.apachefriends.org
 
 ### 2. Ligue o banco
-Abra o mysql server
+Abra o **XAMPP Control Panel** e clique em **Start** na linha **MySQL**.
 
 ### 3. Abra o jogo
 - **Windows:** dê dois cliques em **`INICIAR.bat`**. Ele instala as dependências na primeira vez, cria o banco sozinho e abre o Chrome em tela cheia (modo quiosque).
@@ -30,16 +31,29 @@ Abra o mysql server
 > Se o MySQL estiver desligado, o jogo **continua funcionando** (salva no navegador) e o servidor tenta reconectar a cada 10 segundos.
 
 ### 4. Visitantes jogando no celular 📱
-1. Deixe o PC da expo e os celulares na **mesma rede Wi-Fi**.
-2. Na tela inicial do jogo (no PC) aparece um **QR code**: é só apontar a câmera do celular.
-3. Na primeira vez, o **Windows pode perguntar sobre o Firewall**: clique em **Permitir acesso** (rede privada). Sem isso os celulares não conseguem abrir o jogo.
-4. Todo mundo joga no mesmo banco: o herói criado no celular aparece na Vila do PC e entra no ranking.
 
-> Dica: no Android, "Adicionar à tela inicial" instala o jogo como app em tela cheia.
-> Wi-Fi de escola/evento às vezes bloqueia um celular de ver o outro. Se o QR não abrir, use um roteador próprio ou o roteamento do celular do estande.
+**Pela internet, com ngrok (recomendado na expo: não precisa estar na mesma rede)**
+1. Dê dois cliques em `INICIAR.bat`: ele liga o servidor **e o ngrok** (se o ngrok estiver instalado). Ou rode `ngrok http 3000` em outra janela, como sempre.
+2. O servidor descobre sozinho o endereço que o ngrok gerou e o **QR code da tela inicial passa a apontar direto para ele**. Não precisa copiar nada.
+3. Reiniciou o ngrok e o endereço mudou? O QR code se atualiza sozinho em até 15 segundos.
+4. Na primeira vez em cada celular, o ngrok gratuito mostra uma página de aviso: é só tocar em **Visit Site**.
+
+> **Cota do ngrok gratuito:** 1 GB de dados e 20.000 requisições por mês. Cada visitante gasta cerca de 0,5 MB e 15 a 20 requisições, ou seja, a cota dá para aproximadamente **1.000 visitantes por mês**. Acompanhe no painel do ngrok.
+> Quer usar um endereço fixo em vez do ngrok? Coloque `PUBLIC_URL=https://...` no arquivo `.env`.
+
+**Pela rede local (sem internet)**
+1. Sem ngrok ligado, o QR code aponta para o endereço do PC na rede Wi-Fi. PC e celulares precisam estar na **mesma rede**.
+2. Na primeira vez, o **Windows pode perguntar sobre o Firewall**: clique em **Permitir acesso** (rede privada).
+3. Wi-Fi de escola/evento às vezes bloqueia um celular de ver o outro; nesse caso use o ngrok.
+
+Nos dois casos todo mundo joga no mesmo banco: o herói criado no celular aparece na Vila do PC e entra no ranking.
+
+**iPhone:** funciona no Safari. O som toca só com a chave lateral de silencioso desligada (regra do próprio iPhone), e o iPhone não tem tela cheia nem vibração pelo navegador.
+
+**Carregamento leve:** o servidor junta as bibliotecas e o código do jogo em 2 arquivos compactados (de ~2,1 MB em 27 arquivos para ~0,5 MB em 11) e mostra uma tela de "CARREGANDO..." enquanto chegam. Isso é automático: continue editando os arquivos em `public/js` normalmente.
 
 ### Configuração do banco (`.env`)
-Copie `.env.example` para `.env` se precisar mudar algo. O padrão já é o do MYSQL:
+Copie `.env.example` para `.env` se precisar mudar algo. O padrão já é o do XAMPP:
 
 | Variável | Padrão |
 |---|---|
@@ -101,7 +115,7 @@ No celular em pé, o jogo fica em cima e os controles embaixo, como um videogame
 - **Menu de pausa:** continuar, recomeçar fase ou sair
 - **Tela de resultado** com contagem de pontos, posição no ranking, confete de novo recorde e **conquistas**
 - **Hall da Fama** (top 10 com o avatar de cada jogador, abas **GERAL** e **HOJE**, coroa ♛ para quem derrotou o chefe) e estatísticas da expo
-- **QR code na tela inicial** para os visitantes jogarem no celular
+- **QR code na tela inicial** para os visitantes jogarem no celular (aponta sozinho para o endereço do ngrok)
 - **Modo quiosque:** sem ninguém mexendo, a tela inicial alterna sozinha entre ranking e Vila; menus voltam ao início após 90s e a partida encerra após 60s parada
 
 ---
@@ -136,7 +150,7 @@ Consultas prontas para mostrar na apresentação: [`database/consultas.sql`](dat
 | GET | `/api/jogadores?limite=30` | últimos heróis (Vila) |
 | POST | `/api/partidas` | salva a partida, devolve posição e conquistas novas |
 | GET | `/api/ranking?limite=10&periodo=hoje` | Hall da Fama (`geral` ou `hoje`) |
-| GET | `/api/rede` | endereços na rede local (usado pelo QR code) |
+| GET | `/api/rede` | endereço público do ngrok (se ligado) e endereços na rede local (usado pelo QR code) |
 | GET | `/api/estatisticas` | números gerais |
 | GET | `/api/jogadores/:id/conquistas` | medalhas de um jogador |
 

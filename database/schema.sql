@@ -1,6 +1,6 @@
 -- =====================================================================
 --  EXPOTECH PIXEL QUEST - Banco de dados MySQL
---  Compatível com MySQL 8+ e MariaDB 10.4+
+--  Compatível com MySQL 8+ e MariaDB 10.4+ (XAMPP)
 --
 --  Pode ser importado pelo phpMyAdmin (aba "Importar") ou pelo terminal:
 --     mysql -u root -p < database/schema.sql
